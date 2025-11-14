@@ -35,8 +35,8 @@ class filter3x3: # the kernel that slides over the image to create a feature map
             [0,0,0],
             [0,0,0],
             [0,0,0]],dtype=np.float16) # numbers represent weights to multiply the pixel value by
-        
-class img:
+         
+class img: # for regular unprocessed images
     def __init__(self,filepath=r"media\test_img.png",index=1): # index represents the position in the window (top left to bottom right)
         
         self.filepath=filepath 
@@ -68,7 +68,7 @@ class img:
         #print(self.img)
     def draw(self):
 
-        pygame.draw.rect(win,(255,255,255),(self.tlx,self.tly,28*5,28*5))
+        pygame.draw.rect(win,(255,255,255),(self.tlx,self.tly,imgw*scale_fac,imgh*scale_fac))
 
         for y in range(self.height):
             for x in range(self.width):
@@ -90,18 +90,32 @@ class conv_img: #img with added functions like passing a kernel over the image t
         self.filterw=3
         self.filterh=3
 
-        self.padx=0
-        self.pady=0
+        self.padx=1
+        self.pady=1
+
+        self.padded= np.pad(self.input_img.img,((self.pady,self.pady),(self.padx,self.padx)),mode='constant',constant_values=0)
 
         self.width=int( (self.input_img.width + 2*self.padx-self.filterw)/self.stride + 1)
         self.height=int( (self.input_img.height + 2*self.pady-self.filterh)/self.stride + 1)
 
         self.output_img=np.array([[0 for _ in range(self.width)] for _ in range(self.height)],dtype=np.float16)
 
-        self.label="feature map"
+        self.label="max pooled"
 
         self.text_colour=(222, 215, 202)
         self.text=font.render(self.label,True,self.text_colour)
+
+        self.maxpool=True
+        self.maxpoolW=2
+        self.maxpoolH=2
+        self.maxpoolStride=2
+
+        self.maxpool_img_w=int((self.width-self.maxpoolW)/self.maxpoolStride+1)
+        self.maxpool_img_h=int((self.height-self.maxpoolH)/self.maxpoolStride+1)
+
+        self.maxpool_img=np.zeros((self.maxpool_img_h,self.maxpool_img_w),dtype=np.float16)
+
+        self.maxpool_img_indexes=np.zeros((self.maxpool_img_h,self.maxpool_img_w,2),dtype=np.uint16) # the 2 is for 2 cooridinates, this is done so that we can differentiate the values lates
 
     def produce_image(self):
         for h in range(self.height):
@@ -109,14 +123,40 @@ class conv_img: #img with added functions like passing a kernel over the image t
                 value=0
                 for fh in range(self.filterh):
                     for fw in range(self.filterw):
-                        value+=self.filter.filter[fh][fw]*self.input_img.img[h*self.stride+fh][w*self.stride+fw]
+                        value+=self.filter.filter[fh][fw]*self.padded[h*self.stride+fh][w*self.stride+fw]
                 #print(value)
                 self.output_img[h][w]=value
-        self.draw()
+        if self.maxpool:
+            self.produce_max_pooling()
+        else:
+            self.draw()
+
+    def produce_max_pooling(self): # essentially reduces the image size whilst still keeping the most prominent features
+        for h in range(self.maxpool_img_h):
+            for w in range(self.maxpool_img_w):
+                value=-np.inf
+
+                indexH=0
+                indexW=0
+                for fh in range(self.maxpoolH):
+                    for fw in range(self.maxpoolW):
+
+                        H=h*self.maxpoolStride+fh
+                        W=w*self.maxpoolStride+fw
+                        val=self.output_img[H][W]
+                        if val>value:
+                            value=val
+                            indexH= H
+                            indexW= W
+                
+                self.maxpool_img[h][w]=value
+                self.maxpool_img_indexes[h][w]=[indexH,indexW] # would use x and y but to keep things consistent we are using height and width
+        self.drawMaxP()
 
     def draw(self):
+      
 
-        pygame.draw.rect(win,(255,255,255),(self.input_img.tlx,self.input_img.tly,28*5,28*5))
+        pygame.draw.rect(win,(255,255,255),(self.input_img.tlx,self.input_img.tly,imgw*scale_fac,imgh*scale_fac))
 
         for y in range(self.height):
             for x in range(self.width):
@@ -126,6 +166,22 @@ class conv_img: #img with added functions like passing a kernel over the image t
                 pix_y=self.input_img.tly+y*scale_fac
 
                 pygame.draw.rect(win,(pix,pix,pix),(pix_x,pix_y,scale_fac,scale_fac))
+
+
+        win.blit(self.text,(self.input_img.tlx,self.input_img.tly-img_pad_y/1.5)) # add image label eg input image, feature map 1 etc
+    def drawMaxP(self):
+        pygame.draw.rect(win,(255,255,255),(self.input_img.tlx,self.input_img.tly,imgw*scale_fac,imgh*scale_fac))
+
+        adjusted_scale_factor=scale_fac*2
+
+        for y in range(self.maxpool_img_h):
+            for x in range(self.maxpool_img_w):
+                
+                pix=max(0,self.maxpool_img[y][x]/(self.maxpool_img.max()+0.001))*255
+                pix_x=self.input_img.tlx+x*adjusted_scale_factor #pixel top left corner co - ordinate
+                pix_y=self.input_img.tly+y*adjusted_scale_factor
+
+                pygame.draw.rect(win,(pix,pix,pix),(pix_x,pix_y,adjusted_scale_factor,adjusted_scale_factor))
 
 
         win.blit(self.text,(self.input_img.tlx,self.input_img.tly-img_pad_y/1.5)) # add image label eg input image, feature map 1 etc
@@ -141,6 +197,10 @@ class conv_img: #img with added functions like passing a kernel over the image t
 imgs=[img(index=i) for i in range(imgcountW*imgcountH)]
 fils=[filter3x3() for _ in range(3)]
 cimgs=[conv_img(imgs[i+1],fils[i]) for i in range(3)]
+
+cimgs[1].maxpool=False
+cimgs[1].label="feature map"
+cimgs[1].text=font.render(cimgs[1].label,True,cimgs[1].text_colour)
 
 
 
